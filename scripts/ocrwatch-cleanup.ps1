@@ -6,28 +6,14 @@ $ConfigPath = Join-Path $PSScriptRoot "ocrwatch-config.ps1"
 if (!(Test-Path $ConfigPath)) { Write-Host "Config not found: $ConfigPath" -ForegroundColor Red; exit 1 }
 . $ConfigPath
 
-function Write-Log {
-    param([string]$Message, [string]$Level = "INFO")
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$ts [$Level] $Message" | Tee-Object -FilePath $LogFile -Append | Write-Host
-}
-
-function Get-FileContentHash {
-    param([string]$Path)
-
-    if (!(Test-Path $Path)) {
-        throw "File not found: $Path"
-    }
-
-    return (Get-FileHash -Path $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant()
-}
+Import-Module (Join-Path $PSScriptRoot "OcrWatch.Common.psm1") -Force
 
 function Rebuild-ProcessedHashesFile {
     $hashSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $hashFailures = 0
 
     if (!(Test-Path $WatchFolder)) {
-        Write-Log "Watch folder not found while rebuilding processed hashes: $WatchFolder" "WARN"
+        Write-Log -Path $LogFile -Message "Watch folder not found while rebuilding processed hashes: $WatchFolder" -Level "WARN"
         Set-Content -Path $ProcessedHashesFile -Value @() -Encoding ASCII
         return
     }
@@ -39,22 +25,22 @@ function Rebuild-ProcessedHashesFile {
             $null = $hashSet.Add($hash)
         } catch {
             $hashFailures++
-            Write-Log "Failed to hash $($file.FullName) during processed-hash rebuild: $($_.Exception.Message)" "ERROR"
+            Write-Log -Path $LogFile -Message "Failed to hash $($file.FullName) during processed-hash rebuild: $($_.Exception.Message)" -Level "ERROR"
         }
     }
 
-    Set-Content -Path $ProcessedHashesFile -Value @($hashSet) -Encoding ASCII
-    Write-Log "Rebuilt processed hash state with $($hashSet.Count) hash(es) from $($pdfFiles.Count) current PDF file(s)" "CLEANUP"
+    $hashSet | Set-Content -Path $ProcessedHashesFile -Encoding ASCII
+    Write-Log -Path $LogFile -Message "Rebuilt processed hash state with $($hashSet.Count) hash(es) from $($pdfFiles.Count) current PDF file(s)" -Level "CLEANUP"
 
     if ($hashFailures -gt 0) {
-        Write-Log "Processed-hash rebuild completed with $hashFailures hash failure(s)" "WARN"
+        Write-Log -Path $LogFile -Message "Processed-hash rebuild completed with $hashFailures hash failure(s)" -Level "WARN"
     }
 }
 
-Write-Log "Cleanup started - removing backups older than $DaysToKeep days" "CLEANUP"
+Write-Log -Path $LogFile -Message "Cleanup started - removing backups older than $DaysToKeep days" -Level "CLEANUP"
 
 if (!(Test-Path $BackupFolder)) {
-    Write-Log "Backup folder not found: $BackupFolder" "WARN"
+    Write-Log -Path $LogFile -Message "Backup folder not found: $BackupFolder" -Level "WARN"
     Rebuild-ProcessedHashesFile
     exit 0
 }
@@ -63,23 +49,23 @@ $cutoffDate = (Get-Date).AddDays(-$DaysToKeep)
 $oldFiles = Get-ChildItem -Path $BackupFolder -File | Where-Object { $_.LastWriteTime -lt $cutoffDate }
 
 if ($oldFiles.Count -eq 0) {
-    Write-Log "No old backup files to clean up" "CLEANUP"
+    Write-Log -Path $LogFile -Message "No old backup files to clean up" -Level "CLEANUP"
 } else {
     $totalSize = ($oldFiles | Measure-Object -Property Length -Sum).Sum
     $sizeMB = [math]::Round($totalSize / 1MB, 2)
     
-    Write-Log "Found $($oldFiles.Count) files to delete (${sizeMB}MB total)" "CLEANUP"
+    Write-Log -Path $LogFile -Message "Found $($oldFiles.Count) files to delete (${sizeMB}MB total)" -Level "CLEANUP"
     
     foreach ($file in $oldFiles) {
         try {
             Remove-Item $file.FullName -Force
-            Write-Log "Deleted: $($file.Name) ($(Get-Date $file.LastWriteTime -Format 'yyyy-MM-dd'))" "CLEANUP"
+            Write-Log -Path $LogFile -Message "Deleted: $($file.Name) ($(Get-Date $file.LastWriteTime -Format 'yyyy-MM-dd'))" -Level "CLEANUP"
         } catch {
-            Write-Log "Failed to delete $($file.Name): $($_.Exception.Message)" "ERROR"
+            Write-Log -Path $LogFile -Message "Failed to delete $($file.Name): $($_.Exception.Message)" -Level "ERROR"
         }
     }
     
-    Write-Log "Cleanup completed - freed ${sizeMB}MB" "CLEANUP"
+    Write-Log -Path $LogFile -Message "Cleanup completed - freed ${sizeMB}MB" -Level "CLEANUP"
 }
 
 Rebuild-ProcessedHashesFile

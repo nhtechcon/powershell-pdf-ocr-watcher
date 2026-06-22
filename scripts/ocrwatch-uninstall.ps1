@@ -148,6 +148,7 @@ try {
 Write-Host "`nStep 2: Deleting script files..." -ForegroundColor Cyan
 
 $filesToDelete = @(
+    (Join-Path $BaseDir "OcrWatch.Common.psm1"),
     (Join-Path $BaseDir "ocrwatch-watcher.ps1"),
     (Join-Path $BaseDir "ocrwatch-cleanup.ps1"),
     (Join-Path $BaseDir "ocrwatch-logs.ps1"),

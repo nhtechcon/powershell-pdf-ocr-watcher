@@ -16,6 +16,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$SourceScriptsDir = Join-Path $PSScriptRoot "scripts"
+Import-Module (Join-Path $SourceScriptsDir "OcrWatch.Common.psm1") -Force
 
 function Write-Step {
     param([string]$Message)
@@ -61,29 +63,6 @@ function Get-ExistingSetupConfig {
     return $configData
 }
 
-function New-StrongPassword {
-    param([int]$Length = 28)
-
-    $upper = "ABCDEFGHJKLMNPQRSTUVWXYZ".ToCharArray()
-    $lower = "abcdefghijkmnopqrstuvwxyz".ToCharArray()
-    $digits = "23456789".ToCharArray()
-    $special = "!@#$%^*-_+".ToCharArray()
-    $all = $upper + $lower + $digits + $special
-
-    $chars = @(
-        (Get-Random -InputObject $upper),
-        (Get-Random -InputObject $lower),
-        (Get-Random -InputObject $digits),
-        (Get-Random -InputObject $special)
-    )
-
-    while ($chars.Count -lt $Length) {
-        $chars += Get-Random -InputObject $all
-    }
-
-    -join ($chars | Sort-Object { Get-Random })
-}
-
 function Resolve-PythonExe {
     $commonRoots = @(
         "$env:ProgramFiles\Python",
@@ -109,39 +88,6 @@ function Resolve-PythonExe {
     }
 
     return $null
-}
-
-function Test-MachinePythonPath {
-    param([string]$Path)
-
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    if ($Path.Contains("`r") -or $Path.Contains("`n")) { return $false }
-    if (!(Test-Path $Path)) { return $false }
-    if ($Path -like "$env:SystemDrive\Users\*") { return $false }
-    return $true
-}
-
-function Assert-MachinePythonPath {
-    param([object]$PathValue)
-
-    if ($PathValue -isnot [string]) {
-        throw "Python resolution failed: expected a single string path, got $($PathValue.GetType().FullName)."
-    }
-
-    $resolvedPath = $PathValue.Trim()
-    if ($resolvedPath.Contains("`r") -or $resolvedPath.Contains("`n")) {
-        throw "Python resolution failed: resolved path contains unexpected extra output."
-    }
-
-    if (!(Test-Path $resolvedPath)) {
-        throw "Python resolution failed: resolved path does not exist: $resolvedPath"
-    }
-
-    if ($resolvedPath -like "$env:SystemDrive\Users\*") {
-        throw "Python resolution failed: resolved path points into a user profile, not a machine-wide install: $resolvedPath"
-    }
-
-    return $resolvedPath
 }
 
 function Ensure-MachinePython {
@@ -497,7 +443,6 @@ $TempFolder = Join-Path $BaseDir "temp"
 $BackupFolder = Join-Path $BaseDir "backup"
 $LogFile = Join-Path $BaseDir "ocr.log"
 $ProcessedHashesFile = Join-Path $BaseDir "processed.hashes"
-$SourceScriptsDir = Join-Path $PSScriptRoot "scripts"
 $SourceConfigFile = Join-Path $SourceScriptsDir "ocrwatch-config.ps1"
 $ConfigFile = Join-Path $BaseDir "ocrwatch-config.ps1"
 $WatcherScriptPath = Join-Path $BaseDir "ocrwatch-watcher.ps1"
@@ -506,6 +451,7 @@ $StatusScriptPath = Join-Path $BaseDir "ocrwatch-logs.ps1"
 $UninstallScriptPath = Join-Path $BaseDir "ocrwatch-uninstall.ps1"
 $PrincipalListScriptPath = Join-Path $BaseDir "ocrwatch-list-principals.ps1"
 $DiagnoseScriptPath = Join-Path $BaseDir "ocrwatch-diagnose.ps1"
+$CommonModulePath = Join-Path $BaseDir "OcrWatch.Common.psm1"
 $TaskName = "OCRmyPDF Auto Watcher"
 $CleanupTaskName = "OCRmyPDF Backup Cleanup"
 $TaskDescription = "Watches $WatchFolder and OCRs new PDFs"
@@ -605,7 +551,8 @@ $scriptsToCopy = @(
     @{ Source = "ocrwatch-logs.ps1"; Dest = $StatusScriptPath },
     @{ Source = "ocrwatch-diagnose.ps1"; Dest = $DiagnoseScriptPath },
     @{ Source = "ocrwatch-uninstall.ps1"; Dest = $UninstallScriptPath },
-    @{ Source = "ocrwatch-list-principals.ps1"; Dest = $PrincipalListScriptPath }
+    @{ Source = "ocrwatch-list-principals.ps1"; Dest = $PrincipalListScriptPath },
+    @{ Source = "OcrWatch.Common.psm1"; Dest = $CommonModulePath }
 )
 
 foreach ($script in $scriptsToCopy) {

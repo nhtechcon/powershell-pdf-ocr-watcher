@@ -67,6 +67,7 @@ If OCR processing fails after the original file has been moved to backup, the wa
 ```text
 setup.ps1                     # Root entrypoint for installation
 scripts\
+  OcrWatch.Common.psm1        # Shared helper functions
   ocrwatch-config.ps1         # Public source defaults
   ocrwatch-watcher.ps1
   ocrwatch-cleanup.ps1
@@ -86,6 +87,7 @@ C:\watcher-ocr\
   ├── processed.hashes         # One SHA-256 hash per final OCR-written PDF still present in the watch folder
   ├── temp\                    # Temporary processing folder
   ├── backup\                  # Timestamped original files
+  ├── OcrWatch.Common.psm1     # Shared helper module
   ├── ocrwatch-config.ps1      # Shared configuration (edit paths here)
   ├── ocrwatch-watcher.ps1
   ├── ocrwatch-cleanup.ps1
@@ -324,11 +326,22 @@ cd C:\watcher-ocr
 
 Press Ctrl+C to stop.
 
+## Tests
+
+Run the lightweight test suite from the repository root:
+
+```powershell
+pwsh -NoProfile -File .\tests\run-tests.ps1
+```
+
+The tests cover PowerShell parse checks, public config hygiene, password generation, Python-path validation, processed-hash behavior, SHA-256 hashing, and Task Scheduler result decoding.
+
 ## Files Reference
 
 | File                       | Purpose                             |
 | -------------------------- | ----------------------------------- |
 | `setup.ps1`                | One-time installation script        |
+| `scripts/OcrWatch.Common.psm1` | Shared helper module used by scripts and tests |
 | `scripts/ocrwatch-config.ps1`      | Shared source configuration template |
 | `scripts/ocrwatch-watcher.ps1`     | Main file watcher and OCR processor |
 | `scripts/ocrwatch-cleanup.ps1`     | Backup cleanup script (runs weekly) |
@@ -341,7 +354,7 @@ Press Ctrl+C to stop.
 - Windows-only; this is built around PowerShell, Task Scheduler, Windows ACLs, and local service accounts.
 - Optimized for local disk paths rather than direct OCR from network shares.
 - Requires Administrator rights for setup and uninstall.
-- No automated tests are included at the moment; validation is currently manual and operational.
+- The current test suite covers shared logic and static safety checks; full scheduled-task and ACL behavior still needs Windows integration testing.
 
 ## Support
 

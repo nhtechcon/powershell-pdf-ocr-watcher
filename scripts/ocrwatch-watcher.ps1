@@ -11,6 +11,8 @@ $ConfigPath = Join-Path $PSScriptRoot "ocrwatch-config.ps1"
 if (!(Test-Path $ConfigPath)) { Write-Host "Config not found: $ConfigPath" -ForegroundColor Red; exit 1 }
 . $ConfigPath
 
+Import-Module (Join-Path $PSScriptRoot "OcrWatch.Common.psm1") -Force
+
 $OcrmypdfArgs = "--deskew --clean --optimize 3 --output-type pdfa --skip-text"
 $PythonExe = $PythonExePath
 
@@ -90,68 +92,6 @@ if ($Status) {
     exit 0
 }
 
-function Write-Log {
-    param([string]$Message, [string]$Level = "INFO")
-    $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$ts [$Level] $Message" | Tee-Object -FilePath $LogFile -Append | Write-Host
-}
-
-function Get-FileContentHash {
-    param([string]$Path)
-
-    if (!(Test-Path $Path)) {
-        throw "File not found: $Path"
-    }
-
-    return (Get-FileHash -Path $Path -Algorithm SHA256 -ErrorAction Stop).Hash.ToUpperInvariant()
-}
-
-function Load-ProcessedHashSet {
-    param(
-        [AllowEmptyCollection()]
-        [Parameter(Mandatory = $true)]
-        [System.Collections.Generic.HashSet[string]]$HashSet
-    )
-
-    if (!(Test-Path $ProcessedHashesFile)) {
-        return
-    }
-
-    try {
-        foreach ($line in Get-Content -Path $ProcessedHashesFile -ErrorAction Stop) {
-            $normalized = $line.Trim().ToUpperInvariant()
-            if ($normalized) {
-                $null = $HashSet.Add($normalized)
-            }
-        }
-    } catch {
-        Write-Log "Failed to load processed hash state from ${ProcessedHashesFile}: $($_.Exception.Message)" "ERROR"
-    }
-}
-
-function Save-ProcessedHash {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Hash,
-        [AllowEmptyCollection()]
-        [Parameter(Mandatory = $true)]
-        [System.Collections.Generic.HashSet[string]]$HashSet
-    )
-
-    $normalized = $Hash.Trim().ToUpperInvariant()
-    if (!$normalized) {
-        throw "Cannot persist an empty hash."
-    }
-
-    if ($HashSet.Contains($normalized)) {
-        return $false
-    }
-
-    Add-Content -Path $ProcessedHashesFile -Value $normalized -ErrorAction Stop
-    $null = $HashSet.Add($normalized)
-    return $true
-}
-
 function Reset-FilePermissionsFromParent {
     param([string]$Path)
 
@@ -176,7 +116,7 @@ function Invoke-OcrMyPdf {
     if (!(Test-Path $InputFile)) { return $false }
 
     if (!$PythonExe -or !(Test-Path $PythonExe)) {
-        Write-Log "Pinned Python executable not found at '$PythonExe' - cannot process files" "ERROR"
+        Write-Log -Path $LogFile -Message "Pinned Python executable not found at '$PythonExe' - cannot process files" -Level "ERROR"
         return $false
     }
 
@@ -187,47 +127,47 @@ function Invoke-OcrMyPdf {
     $tempInput = Join-Path $TempFolder "$timestamp`_input_$fileName"
     $tempOutput = Join-Path $TempFolder "$timestamp`_output_$fileName"
 
-    Write-Log "Processing $InputFile"
+    Write-Log -Path $LogFile -Message "Processing $InputFile"
     try {
         Copy-Item -Path $InputFile -Destination $tempInput -Force
-        Write-Log "Copied to temp for processing"
+        Write-Log -Path $LogFile -Message "Copied to temp for processing"
 
         $backupPath = Join-Path $BackupFolder "$timestamp`_$fileName"
         Move-Item -Path $InputFile -Destination $backupPath -Force
-        Write-Log "Backed up original to: $backupPath"
+        Write-Log -Path $LogFile -Message "Backed up original to: $backupPath"
 
         $args = @("-m", "ocrmypdf", $tempInput, $tempOutput, "-l", $Language) + $OcrmypdfArgs.Split()
-        & $PythonExe @args 2>&1 | ForEach-Object { Write-Log "  $_" "DEBUG" }
+        & $PythonExe @args 2>&1 | ForEach-Object { Write-Log -Path $LogFile -Message "  $_" -Level "DEBUG" }
 
         if (Test-Path $tempOutput) {
             Move-Item -Path $tempOutput -Destination $InputFile -Force
             Reset-FilePermissionsFromParent -Path $InputFile
             try {
                 $finalOutputHash = Get-FileContentHash -Path $InputFile
-                $persisted = Save-ProcessedHash -Hash $finalOutputHash -HashSet $ProcessedHashSet
+                $persisted = Add-ProcessedHash -Path $ProcessedHashesFile -Hash $finalOutputHash -HashSet $ProcessedHashSet
                 if ($persisted) {
-                    Write-Log "Recorded processed hash for $InputFile" "DEBUG"
+                    Write-Log -Path $LogFile -Message "Recorded processed hash for $InputFile" -Level "DEBUG"
                 }
             } catch {
-                Write-Log "Failed to persist processed hash for ${InputFile}: $($_.Exception.Message)" "ERROR"
+                Write-Log -Path $LogFile -Message "Failed to persist processed hash for ${InputFile}: $($_.Exception.Message)" -Level "ERROR"
             }
-            Write-Log "Success: OCR'd file placed at $InputFile with watch-folder ACLs restored" "SUCCESS"
+            Write-Log -Path $LogFile -Message "Success: OCR'd file placed at $InputFile with watch-folder ACLs restored" -Level "SUCCESS"
             return $true
         }
 
-        Write-Log "No output file created - restoring backup" "ERROR"
+        Write-Log -Path $LogFile -Message "No output file created - restoring backup" -Level "ERROR"
         Copy-Item -Path $backupPath -Destination $InputFile -Force
-        Write-Log "Restored backup to $InputFile" "INFO"
+        Write-Log -Path $LogFile -Message "Restored backup to $InputFile" -Level "INFO"
         return $false
     } catch {
-        Write-Log "Error: $($_.Exception.Message)" "ERROR"
+        Write-Log -Path $LogFile -Message "Error: $($_.Exception.Message)" -Level "ERROR"
         $restored = $false
         if (Test-Path $backupPath) {
             Copy-Item -Path $backupPath -Destination $InputFile -Force
             $restored = $true
         }
-        if ($restored) { Write-Log "Restored backup to $InputFile" "INFO" }
-        else { Write-Log "Backup not found at $backupPath - file lost!" "CRITICAL" }
+        if ($restored) { Write-Log -Path $LogFile -Message "Restored backup to $InputFile" -Level "INFO" }
+        else { Write-Log -Path $LogFile -Message "Backup not found at $backupPath - file lost!" -Level "CRITICAL" }
         return $false
     } finally {
         if (Test-Path $tempInput) { Remove-Item $tempInput -Force -ErrorAction SilentlyContinue }
@@ -236,19 +176,20 @@ function Invoke-OcrMyPdf {
 }
 
 if ($PythonExe -and (Test-Path $PythonExe)) {
-    Write-Log "Python pinned at: $PythonExe"
+    Write-Log -Path $LogFile -Message "Python pinned at: $PythonExe"
 } else {
-    Write-Log "WARNING: Pinned Python executable missing - OCR processing will fail" "WARN"
+    Write-Log -Path $LogFile -Message "WARNING: Pinned Python executable missing - OCR processing will fail" -Level "WARN"
 }
 
-Write-Log "Watcher started - monitoring $WatchFolder\*.pdf" "START"
+Write-Log -Path $LogFile -Message "Watcher started - monitoring $WatchFolder\*.pdf" -Level "START"
 
 $processedFiles = @{}
 $retryCount = @{}
 $MaxRetries = 3
-$processedHashSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-Load-ProcessedHashSet -HashSet $processedHashSet
-Write-Log "Loaded $($processedHashSet.Count) processed file hash(es) from $ProcessedHashesFile" "INFO"
+$processedHashSet = New-ProcessedHashSet
+Import-ProcessedHashes -Path $ProcessedHashesFile -HashSet $processedHashSet `
+    -LogAction { param($Message, $Level) Write-Log -Path $LogFile -Message $Message -Level $Level }
+Write-Log -Path $LogFile -Message "Loaded $($processedHashSet.Count) processed file hash(es) from $ProcessedHashesFile" -Level "INFO"
 
 try {
     while ($true) {
@@ -274,18 +215,18 @@ try {
                 try {
                     $inputHash = Get-FileContentHash -Path $file.FullName
                 } catch {
-                    Write-Log "Failed to compute hash for $($file.FullName): $($_.Exception.Message)" "ERROR"
+                    Write-Log -Path $LogFile -Message "Failed to compute hash for $($file.FullName): $($_.Exception.Message)" -Level "ERROR"
                     if (!$retryCount.ContainsKey($file.FullName)) { $retryCount[$file.FullName] = 0 }
                     $retryCount[$file.FullName]++
                     if ($retryCount[$file.FullName] -ge $MaxRetries) {
-                        Write-Log "Max retries ($MaxRetries) for $($file.Name) after hash failures - abandoning (file left in place)" "ERROR"
+                        Write-Log -Path $LogFile -Message "Max retries ($MaxRetries) for $($file.Name) after hash failures - abandoning (file left in place)" -Level "ERROR"
                         $processedFiles[$file.FullName] = $true
                     }
                     continue
                 }
 
                 if ($processedHashSet.Contains($inputHash)) {
-                    Write-Log "Skipping $($file.FullName) - content hash already processed" "INFO"
+                    Write-Log -Path $LogFile -Message "Skipping $($file.FullName) - content hash already processed" -Level "INFO"
                     $processedFiles[$file.FullName] = $true
                     continue
                 }
@@ -298,19 +239,19 @@ try {
                     if (!$retryCount.ContainsKey($file.FullName)) { $retryCount[$file.FullName] = 0 }
                     $retryCount[$file.FullName]++
                     if ($retryCount[$file.FullName] -ge $MaxRetries) {
-                        Write-Log "Max retries ($MaxRetries) for $($file.Name) - abandoning (file left in place)" "ERROR"
+                        Write-Log -Path $LogFile -Message "Max retries ($MaxRetries) for $($file.Name) - abandoning (file left in place)" -Level "ERROR"
                         $processedFiles[$file.FullName] = $true
                     }
                 }
             } catch {
                 $scriptLine = $_.InvocationInfo.ScriptLineNumber
                 $lineText = $_.InvocationInfo.Line.Trim()
-                Write-Log "Unhandled error while evaluating $($file.FullName) at line ${scriptLine}: $($_.Exception.Message)" "ERROR"
+                Write-Log -Path $LogFile -Message "Unhandled error while evaluating $($file.FullName) at line ${scriptLine}: $($_.Exception.Message)" -Level "ERROR"
                 if ($lineText) {
-                    Write-Log "  Failing statement: $lineText" "DEBUG"
+                    Write-Log -Path $LogFile -Message "  Failing statement: $lineText" -Level "DEBUG"
                 }
                 if ($_.ScriptStackTrace) {
-                    Write-Log "  Stack: $($_.ScriptStackTrace)" "DEBUG"
+                    Write-Log -Path $LogFile -Message "  Stack: $($_.ScriptStackTrace)" -Level "DEBUG"
                 }
             }
         }
@@ -327,15 +268,15 @@ try {
 } catch {
     $scriptLine = $_.InvocationInfo.ScriptLineNumber
     $lineText = $_.InvocationInfo.Line.Trim()
-    Write-Log "Watcher crashed at line ${scriptLine}: $($_.Exception.Message)" "CRITICAL"
+    Write-Log -Path $LogFile -Message "Watcher crashed at line ${scriptLine}: $($_.Exception.Message)" -Level "CRITICAL"
     if ($lineText) {
-        Write-Log "  Failing statement: $lineText" "DEBUG"
+        Write-Log -Path $LogFile -Message "  Failing statement: $lineText" -Level "DEBUG"
     }
     if ($_.ScriptStackTrace) {
-        Write-Log "  Stack: $($_.ScriptStackTrace)" "DEBUG"
+        Write-Log -Path $LogFile -Message "  Stack: $($_.ScriptStackTrace)" -Level "DEBUG"
     }
     throw
 }
 finally {
-    Write-Log "Watcher stopped" "STOP"
+    Write-Log -Path $LogFile -Message "Watcher stopped" -Level "STOP"
 }

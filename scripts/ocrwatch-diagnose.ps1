@@ -12,6 +12,8 @@ if (!(Test-Path $ConfigPath)) {
 
 . $ConfigPath
 
+Import-Module (Join-Path $PSScriptRoot "OcrWatch.Common.psm1") -Force
+
 function Get-TaskEvents {
     param(
         [string]$Name,
@@ -28,16 +30,6 @@ function Get-TaskEvents {
             Select-Object -First $MaxEvents
     } catch {
         @()
-    }
-}
-
-function Resolve-TaskSchedulerResultMessage {
-    param([int]$Code)
-
-    switch ($Code) {
-        267011 { return "0x41303 SCHED_S_TASK_HAS_NOT_RUN: the task has not run yet." }
-        2147943785 { return "0x80070569 ERROR_LOGON_TYPE_NOT_GRANTED: the account lacks the requested logon type on this computer." }
-        default { return ("0x{0:X8}" -f $Code) }
     }
 }
 
